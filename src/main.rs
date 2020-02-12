@@ -11,8 +11,12 @@ use std::thread;
 use websocket::sync::Server;
 use websocket::{Message, OwnedMessage};
 
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    info!("moh-server v{}", VERSION);
 
     let config_path = Path::new("./config.toml");
     if !config_path.exists() {

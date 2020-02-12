@@ -1,25 +1,79 @@
 #[macro_use]
 extern crate log;
 
+use serde::Deserialize;
+use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
+use std::sync::Arc;
 use std::thread;
-use structopt::StructOpt;
 use websocket::sync::Server;
 use websocket::{Message, OwnedMessage};
 
 fn main() {
-    env_logger::init();
+    env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let server = Server::bind("127.0.0.1:1234").unwrap();
-    info!("Waiting connection on 127.0.0.1:1234 ...");
+    let config_path = Path::new("./config.toml");
+    if !config_path.exists() {
+        warn!("Configuration file not exists! Creating...");
+        let mut file = File::create(&config_path).unwrap();
+        file.write_all(include_bytes!("../resources/config.toml"))
+            .unwrap();
+        warn!("Configuration file (config.toml) has been created! Please check!");
+        return;
+    }
+    let mut config_file = File::open(&config_path).unwrap();
+    let config: Config = {
+        let mut buf = String::new();
+        config_file.read_to_string(&mut buf).unwrap();
+        toml::from_str(&buf).unwrap()
+    };
 
+    start(config);
+}
+
+#[derive(Debug, Deserialize)]
+struct Config {
+    mc_server_addr: String,
+    ws_listen_addr: String,
+    proxy_protocol: bool,
+}
+
+fn start(config: Config) {
+    if config.proxy_protocol {
+        info!("Using proxy protocol!");
+    }
+    let server = Server::bind(&config.ws_listen_addr).unwrap();
+    info!("Waiting connection on {} ...", &config.ws_listen_addr);
+
+    let config = Arc::new(config);
     for connection in server.filter_map(Result::ok) {
+        let config = Arc::clone(&config);
         thread::spawn(move || {
             let ws_client = connection.accept().unwrap();
-            info!("New connection accepted!");
-            let mut tcp_client_reader = TcpStream::connect("127.0.0.1:25565").unwrap();
+            info!(
+                "New connection accepted! Connecting to {} ...",
+                &config.mc_server_addr
+            );
+            let mut tcp_client_reader = TcpStream::connect(&config.mc_server_addr).unwrap();
             let mut tcp_client_writer = tcp_client_reader.try_clone().unwrap();
+            if config.proxy_protocol {
+                let addr = ws_client.peer_addr().unwrap();
+                let is_v4 = addr.is_ipv4();
+                let version = if is_v4 { "4" } else { "6" };
+                let local_ip = if is_v4 { "127.0.0.1" } else { "::1" };
+                let remote_ip = &format!("{}", addr.ip());
+                tcp_client_writer
+                    .write_all(
+                        format!(
+                            "PROXY TCP{} {} {} 25565 25565\r\n",
+                            version, remote_ip, local_ip
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+            }
             let (mut ws_receiver, mut ws_sender) = ws_client.split().unwrap();
             // to server
             thread::spawn(move || {
@@ -58,7 +112,3 @@ fn main() {
         });
     }
 }
-
-#[derive(StructOpt, Debug)]
-#[structopt(name = "Minecraft Over HTTP")]
-struct Opt {}

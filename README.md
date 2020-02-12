@@ -4,7 +4,7 @@ Rust implementation of [riku6460/minecraft-over-http](https://github.com/riku646
 
 ## ToDo
 
-- [ ] Use async/await to reduce threads
+- [x] Use async/await to reduce threads
 
 ## Installation
 

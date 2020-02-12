@@ -1,19 +1,22 @@
 #[macro_use]
 extern crate log;
 
+use futures_util::sink::SinkExt;
+use futures_util::stream::StreamExt;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::sync::Arc;
-use std::thread;
-use websocket::sync::Server;
-use websocket::{Message, OwnedMessage};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
     openssl_probe::init_ssl_cert_env_vars();
 
@@ -35,7 +38,7 @@ fn main() {
         toml::from_str(&buf).unwrap()
     };
 
-    start(config);
+    start(config).await;
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,26 +48,26 @@ struct Config {
     proxy_protocol: bool,
 }
 
-fn start(config: Config) {
+async fn start(config: Config) {
     if config.proxy_protocol {
         info!("Using proxy protocol!");
     }
-    let server = Server::bind(&config.ws_listen_addr).unwrap();
+    let mut server = TcpListener::bind(&config.ws_listen_addr).await.unwrap();
     info!("Waiting connection on {} ...", &config.ws_listen_addr);
 
     let config = Arc::new(config);
-    for connection in server.filter_map(Result::ok) {
+    while let Ok((connection, _)) = server.accept().await {
         let config = Arc::clone(&config);
-        thread::spawn(move || {
-            let ws_client = connection.accept().unwrap();
+        tokio::spawn(async move {
+            let ws_client = accept_async(connection).await.unwrap();
             info!(
                 "New connection accepted! Connecting to {} ...",
                 &config.mc_server_addr
             );
-            let mut tcp_client_reader = TcpStream::connect(&config.mc_server_addr).unwrap();
-            let mut tcp_client_writer = tcp_client_reader.try_clone().unwrap();
+            let tcp_client = TcpStream::connect(&config.mc_server_addr).await.unwrap();
+            let (mut tcp_client_reader, mut tcp_client_writer) = tokio::io::split(tcp_client);
             if config.proxy_protocol {
-                let addr = ws_client.peer_addr().unwrap();
+                let addr = ws_client.get_ref().peer_addr().unwrap();
                 let is_v4 = addr.is_ipv4();
                 let version = if is_v4 { "4" } else { "6" };
                 let local_ip = if is_v4 { "127.0.0.1" } else { "::1" };
@@ -77,24 +80,25 @@ fn start(config: Config) {
                         )
                         .as_bytes(),
                     )
+                    .await
                     .unwrap();
             }
-            let (mut ws_receiver, mut ws_sender) = ws_client.split().unwrap();
+            let (mut ws_sender, mut ws_receiver) = ws_client.split();
             // to server
-            thread::spawn(move || {
-                for message in ws_receiver.incoming_messages() {
+            tokio::spawn(async move {
+                while let Some(message) = ws_receiver.next().await {
                     debug!("[WS] Received a message");
                     let message = message.unwrap();
                     match message {
-                        OwnedMessage::Binary(bin) => {
+                        Message::Binary(bin) => {
                             debug!("[TCP] Sending a message");
-                            tcp_client_writer.write_all(&bin).unwrap();
+                            tcp_client_writer.write_all(&bin).await.unwrap();
                         }
-                        OwnedMessage::Close(_data) => {
+                        Message::Close(_data) => {
                             debug!("[WS] Closed");
-                            tcp_client_writer
-                                .shutdown(std::net::Shutdown::Both)
-                                .unwrap();
+                            //                            tcp_client_to_shutdown
+                            //                                .shutdown(std::net::Shutdown::Both)
+                            //                                .unwrap();
                             break;
                         }
                         message => warn!("Unsupported message type: {:?}", message),
@@ -104,14 +108,15 @@ fn start(config: Config) {
             // to client
             loop {
                 let mut buf = [0u8; 1024];
-                let read = tcp_client_reader.read(&mut buf).unwrap();
+                let read = tcp_client_reader.read(&mut buf).await.unwrap();
                 debug!("[TCP] Received a message. Read {} bytes.", read);
                 if read == 0 {
                     break;
                 }
                 debug!("[WS] Sending a message");
                 ws_sender
-                    .send_message(&Message::binary(&buf[0..read]))
+                    .send(Message::binary(&buf[0..read]))
+                    .await
                     .unwrap();
             }
         });

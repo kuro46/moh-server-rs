@@ -1,6 +1,0 @@
-# Address to Minecraft server
-mc_server_addr = "127.0.0.1:25565"
-# Address to listen MoH Clients' connection
-ws_listen_addr = "127.0.0.1:1234"
-# Whether to use proxy protocol
-proxy_protocol = false

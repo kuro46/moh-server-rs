@@ -385,6 +385,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log 0.4.8",
+ "openssl-probe",
  "serde",
  "toml",
  "websocket",

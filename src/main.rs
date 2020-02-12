@@ -15,6 +15,7 @@ const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    openssl_probe::init_ssl_cert_env_vars();
 
     info!("moh-server v{}", VERSION);
 

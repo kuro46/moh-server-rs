@@ -1,5 +1,5 @@
 [package]
-name = "moh-server-rs"
+name = "moh-server"
 version = "0.1.0"
 authors = ["shirokuro <46kuro212@gmail.com>"]
 edition = "2018"

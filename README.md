@@ -9,8 +9,7 @@ Rust implementation of [riku6460/minecraft-over-http](https://github.com/riku646
 ## Installation
 
 ```
-git clone https://github.com/kuro46/moh-server-rs.git
-cargo install --path .
+cargo install --git https://github.com/kuro46/moh-server-rs.git
 ```
 Then, you can start the server with `moh-server`
 

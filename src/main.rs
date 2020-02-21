@@ -59,12 +59,14 @@ async fn start(config: Config) {
     while let Ok((connection, _)) = server.accept().await {
         let config = Arc::clone(&config);
         tokio::spawn(async move {
+            connection.set_nodelay(true).unwrap();
             let ws_client = accept_async(connection).await.unwrap();
             info!(
                 "New connection accepted! Connecting to {} ...",
                 &config.mc_server_addr
             );
             let tcp_client = TcpStream::connect(&config.mc_server_addr).await.unwrap();
+            tcp_client.set_nodelay(true).unwrap();
             let (mut tcp_client_reader, mut tcp_client_writer) = tokio::io::split(tcp_client);
             if config.proxy_protocol {
                 let addr = ws_client.get_ref().peer_addr().unwrap();
@@ -95,7 +97,7 @@ async fn start(config: Config) {
                             tcp_client_writer.write_all(&bin).await.unwrap();
                         }
                         Message::Close(_data) => {
-                            debug!("[WS] Closed");
+                            debug!("[WS] Connection closed by client");
                             //                            tcp_client_to_shutdown
                             //                                .shutdown(std::net::Shutdown::Both)
                             //                                .unwrap();
@@ -111,6 +113,7 @@ async fn start(config: Config) {
                 let read = tcp_client_reader.read(&mut buf).await.unwrap();
                 debug!("[TCP] Received a message. Read {} bytes.", read);
                 if read == 0 {
+                    info!("[TCP] Connection is closed by server.");
                     break;
                 }
                 debug!("[WS] Sending a message");
